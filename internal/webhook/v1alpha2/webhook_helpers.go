@@ -56,6 +56,9 @@ func validateLabelLength(label string, path *field.Path) *field.Error {
 }
 
 func validateRegion(ctx context.Context, linodegoclient clients.LinodeClient, id string, path *field.Path, capabilities ...linodego.RegionCapability) *field.Error {
+	if os.Getenv("LINODE_SKIP_REGION_VALIDATION") == "true" {
+		return nil
+	}
 	region, err := linodegoclient.GetRegion(ctx, id)
 	if err != nil {
 		return field.NotFound(path, id)
