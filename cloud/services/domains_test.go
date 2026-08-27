@@ -52,6 +52,59 @@ var unhealthyStatus = &clusterv1.MachineStatus{
 	},
 }
 
+func TestCreateDomainRecordMatchesReturnedRecord(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockDNSClient := mock.NewMockLinodeClient(ctrl)
+	mockDNSClient.EXPECT().ListDomainRecords(gomock.Any(), 1, gomock.Any()).Return([]linodego.DomainRecord{
+		{
+			Type:   linodego.RecordTypeA,
+			Name:   "cluster.example",
+			Target: "192.0.2.8",
+		},
+	}, nil)
+	mockDNSClient.EXPECT().CreateDomainRecord(gomock.Any(), 1, linodego.DomainRecordCreateOptions{
+		Type:   linodego.RecordTypeA,
+		Name:   "cluster.example",
+		Target: "192.0.2.9",
+		TTLSec: 30,
+	}).Return(&linodego.DomainRecord{}, nil)
+
+	cscope := &scope.ClusterScope{LinodeDomainsClient: mockDNSClient}
+	err := CreateDomainRecord(context.Background(), cscope, 1, DNSOptions{
+		Hostname:      "cluster.example",
+		Target:        "192.0.2.9",
+		DNSRecordType: linodego.RecordTypeA,
+		DNSTTLSec:     30,
+	})
+
+	assert.NoError(t, err)
+}
+
+func TestCreateDomainRecordUsesExistingRecords(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockDNSClient := mock.NewMockLinodeClient(ctrl)
+	c := &scope.ClusterScope{LinodeDomainsClient: mockDNSClient}
+
+	err := createDomainRecord(context.Background(), c, 1, []linodego.DomainRecord{
+		{
+			Type:   linodego.RecordTypeA,
+			Name:   "cluster.example",
+			Target: "192.0.2.9",
+		},
+	}, DNSOptions{
+		Hostname:      "cluster.example",
+		Target:        "192.0.2.9",
+		DNSRecordType: linodego.RecordTypeA,
+		DNSTTLSec:     30,
+	})
+
+	assert.NoError(t, err)
+}
+
 func TestAddIPToEdgeDNS(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -1027,7 +1080,22 @@ func TestAddIPToDNS(t *testing.T) {
 					{
 						ID:     1234,
 						Type:   "A",
-						Name:   "test-cluster",
+						Name:   "test-cluster-test-hash",
+						Target: "10.10.10.10",
+						TTLSec: 30,
+					},
+					{
+						ID:     1235,
+						Type:   "AAAA",
+						Name:   "test-cluster-test-hash",
+						Target: "fd00::",
+						TTLSec: 30,
+					},
+					{
+						ID:     1236,
+						Type:   "TXT",
+						Name:   "test-cluster-test-hash",
+						Target: "test-cluster",
 						TTLSec: 30,
 					},
 				}, nil).AnyTimes()
@@ -1167,8 +1235,9 @@ func TestAddIPToDNS(t *testing.T) {
 				mockClient.EXPECT().ListDomainRecords(gomock.Any(), gomock.Any(), gomock.Any()).Return([]linodego.DomainRecord{
 					{
 						ID:     1234,
-						Type:   "A",
-						Name:   "test-cluster",
+						Type:   "TXT",
+						Name:   "test-cluster-test-hash",
+						Target: "test-cluster",
 						TTLSec: 30,
 					},
 				}, nil).AnyTimes()
