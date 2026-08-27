@@ -41,6 +41,15 @@ type DNSOptions struct {
 	DNSTTLSec     int
 }
 
+func hasDomainRecord(records []linodego.DomainRecord, dnsEntry DNSOptions) bool {
+	for _, record := range records {
+		if record.Name == dnsEntry.Hostname && record.Target == dnsEntry.Target && record.Type == dnsEntry.DNSRecordType {
+			return true
+		}
+	}
+	return false
+}
+
 // EnsureDNSEntries ensures the domainrecord on Linode Cloud Manager is created, updated, or deleted based on operation passed
 func EnsureDNSEntries(ctx context.Context, cscope *scope.ClusterScope, operation string) error {
 	// Get the public IP that was assigned
@@ -201,7 +210,7 @@ func EnsureLinodeDNSEntries(ctx context.Context, cscope *scope.ClusterScope, ope
 				return err
 			}
 		} else {
-			if err := CreateDomainRecord(ctx, cscope, domainID, dnsEntry); err != nil {
+			if err := createDomainRecord(ctx, cscope, domainID, domainRecords, dnsEntry); err != nil {
 				return err
 			}
 		}
@@ -368,16 +377,19 @@ func processLinodeMachine(ctx context.Context, cscope *scope.ClusterScope, machi
 	}
 
 	logger := logr.FromContextOrDiscard(ctx)
-	isReady, err := isCapiMachineReady(ctx, capiMachine, cscope.Client)
-	if err != nil {
-		return nil, fmt.Errorf("failed to determine if linode machine %s is ready: %w", machine.Name, err)
-	}
-	if !firstMachine && !isReady {
-		// always process the first linodeMachine, and add its IP to the DNS entries.
-		// For other linodeMachine, only process them if the CAPI machine is ready
-		logger.Info("skipping DNS entry creation for LinodeMachine as the CAPI machine is not ready", "LinodeMachine", machine.Name)
-		// If not ready, return an error so we can requeue and try again later.
-		return nil, util.ErrReconcileAgain
+	if !firstMachine {
+		isReady, err := isCapiMachineReady(ctx, capiMachine, cscope.Client)
+		if err != nil {
+			logger.Error(err, "failed to determine if linode machine is ready, will not requeue", "LinodeMachine", machine.Name)
+			return nil, nil
+		}
+		if !isReady {
+			// always process the first linodeMachine, and add its IP to the DNS entries.
+			// For other linodeMachine, only process them if the CAPI machine is ready
+			logger.Info("skipping DNS entry creation for LinodeMachine as the CAPI machine is not ready", "LinodeMachine", machine.Name)
+			// If not ready, return an error so we can requeue and try again later.
+			return nil, util.ErrReconcileAgain
+		}
 	}
 
 	options := []DNSOptions{}
@@ -448,7 +460,6 @@ func GetDomainID(ctx context.Context, cscope *scope.ClusterScope) (int, error) {
 }
 
 func CreateDomainRecord(ctx context.Context, cscope *scope.ClusterScope, domainID int, dnsEntry DNSOptions) error {
-	// Check if domain record exists for this IP and name combo
 	filter, err := json.Marshal(map[string]interface{}{"name": dnsEntry.Hostname, "target": dnsEntry.Target, "type": dnsEntry.DNSRecordType})
 	if err != nil {
 		return err
@@ -459,8 +470,12 @@ func CreateDomainRecord(ctx context.Context, cscope *scope.ClusterScope, domainI
 		return err
 	}
 
-	// If record doesnt exist, create it
-	if len(domainRecords) == 0 {
+	return createDomainRecord(ctx, cscope, domainID, domainRecords, dnsEntry)
+}
+
+func createDomainRecord(ctx context.Context, cscope *scope.ClusterScope, domainID int, domainRecords []linodego.DomainRecord, dnsEntry DNSOptions) error {
+	// If the API ignores the filter, only skip creation for an exact match.
+	if !hasDomainRecord(domainRecords, dnsEntry) {
 		if _, err := cscope.LinodeDomainsClient.CreateDomainRecord(
 			ctx,
 			domainID,
