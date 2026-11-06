@@ -33,6 +33,18 @@ const (
 	DefaultConditionReason = "None"
 )
 
+// Only InsufficientCapacity and AccountLimitReached describe classified instance-create
+// failures on PreflightCreated and Ready. CreateError remains an internal diagnostic,
+// not another category in this signal. There is no neutral reason: when a classified
+// failure is retired, the Ready condition is removed and CAPI reports its standard
+// fallback on the Machine until the normal lifecycle sets Ready again.
+const (
+	// InsufficientCapacity indicates that the requested Linode plan is unavailable in the region.
+	InsufficientCapacity = "InsufficientCapacity"
+	// AccountLimitReached indicates that the account's active-services limit prevents instance creation.
+	AccountLimitReached = "AccountLimitReached"
+)
+
 // LinodeMachineSpec defines the desired state of LinodeMachine
 type LinodeMachineSpec struct {
 	// providerID is the unique identifier as specified by the cloud provider.
